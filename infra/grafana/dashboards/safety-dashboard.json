@@ -1,0 +1,303 @@
+{
+  "title": "AI Safety Platform — Production Dashboard",
+  "uid": "ai-safety-v1",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-24h", "to": "now" },
+  "tags": ["ai", "safety", "llm", "eval"],
+  "panels": [
+
+    {
+      "id": 1,
+      "title": "Overall quality score",
+      "description": "Rolling average eval score across all production prompts. Alert fires below 0.75.",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "graphMode": "area",
+        "orientation": "auto",
+        "textMode": "auto",
+        "thresholds": {
+          "mode": "absolute",
+          "steps": [
+            { "color": "red",    "value": null },
+            { "color": "orange", "value": 0.65 },
+            { "color": "green",  "value": 0.80 }
+          ]
+        }
+      },
+      "targets": [{
+        "expr": "avg(llm_quality_score)",
+        "legendFormat": "Quality score",
+        "datasource": { "type": "prometheus", "uid": "prometheus" }
+      }]
+    },
+
+    {
+      "id": 2,
+      "title": "Eval pass rate",
+      "description": "Fraction of eval runs passing all metrics. Alert fires below 85%.",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "unit": "percentunit",
+        "thresholds": {
+          "mode": "absolute",
+          "steps": [
+            { "color": "red",    "value": null },
+            { "color": "orange", "value": 0.75 },
+            { "color": "green",  "value": 0.90 }
+          ]
+        }
+      },
+      "targets": [{
+        "expr": "avg(llm_eval_pass_rate)",
+        "legendFormat": "Pass rate",
+        "datasource": { "type": "prometheus", "uid": "prometheus" }
+      }]
+    },
+
+    {
+      "id": 3,
+      "title": "Guardrail block rate",
+      "description": "Fraction of requests blocked by input or output guardrails. Spike = possible attack.",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "unit": "percentunit",
+        "thresholds": {
+          "mode": "absolute",
+          "steps": [
+            { "color": "green",  "value": null },
+            { "color": "orange", "value": 0.02 },
+            { "color": "red",    "value": 0.05 }
+          ]
+        }
+      },
+      "targets": [{
+        "expr": "rate(guardrail_blocks_total[5m]) / (rate(guardrail_blocks_total[5m]) + 0.001)",
+        "legendFormat": "Block rate",
+        "datasource": { "type": "prometheus", "uid": "prometheus" }
+      }]
+    },
+
+    {
+      "id": 4,
+      "title": "Hallucination rate",
+      "description": "Fraction of responses with hallucination score above threshold.",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "unit": "percentunit",
+        "thresholds": {
+          "mode": "absolute",
+          "steps": [
+            { "color": "green",  "value": null },
+            { "color": "orange", "value": 0.05 },
+            { "color": "red",    "value": 0.10 }
+          ]
+        }
+      },
+      "targets": [{
+        "expr": "avg(llm_hallucination_rate)",
+        "legendFormat": "Hallucination rate",
+        "datasource": { "type": "prometheus", "uid": "prometheus" }
+      }]
+    },
+
+    {
+      "id": 5,
+      "title": "Quality score over time — by prompt version",
+      "description": "Separate line per prompt version. Drop after a deployment = rollback candidate.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 16, "x": 0, "y": 4 },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red",   "value": null },
+              { "color": "green", "value": 0.80 }
+            ]
+          }
+        }
+      },
+      "targets": [{
+        "expr": "llm_quality_score",
+        "legendFormat": "{{prompt_id}} v{{version}}",
+        "datasource": { "type": "prometheus", "uid": "prometheus" }
+      }]
+    },
+
+    {
+      "id": 6,
+      "title": "Active drift alerts",
+      "description": "Unresolved quality drift alerts. Critical = auto-rollback triggered.",
+      "type": "table",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 4 },
+      "options": { "showHeader": true },
+      "targets": [{
+        "rawSql": "SELECT prompt_id, prompt_version, severity, round(baseline_score::numeric,3) as baseline, round(current_score::numeric,3) as current, round(drop_pct::numeric*100,1) as drop_pct, auto_rollback, triggered_at FROM drift_alerts WHERE resolved_at IS NULL ORDER BY triggered_at DESC LIMIT 20",
+        "format": "table",
+        "datasource": { "type": "postgres", "uid": "postgres" }
+      }]
+    },
+
+    {
+      "id": 7,
+      "title": "Guardrail blocks by type",
+      "description": "Breakdown of blocked requests by guardrail check type.",
+      "type": "piechart",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 12 },
+      "options": { "legend": { "displayMode": "list", "placement": "right" } },
+      "targets": [{
+        "expr": "sum by (reason) (increase(guardrail_blocks_total[1h]))",
+        "legendFormat": "{{reason}}",
+        "datasource": { "type": "prometheus", "uid": "prometheus" }
+      }]
+    },
+
+    {
+      "id": 8,
+      "title": "PII detections per hour",
+      "description": "PII entities detected in inputs and outputs. Sustained high rate = data handling issue.",
+      "type": "bargauge",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 12 },
+      "options": {
+        "orientation": "horizontal",
+        "reduceOptions": { "calcs": ["sum"] }
+      },
+      "targets": [{
+        "expr": "sum by (entity_type, phase) (increase(guardrail_pii_detections_total[1h]))",
+        "legendFormat": "{{phase}} — {{entity_type}}",
+        "datasource": { "type": "prometheus", "uid": "prometheus" }
+      }]
+    },
+
+    {
+      "id": 9,
+      "title": "A/B test — score delta (treatment vs control)",
+      "description": "Positive = treatment is better. Cross zero = no clear winner. >0.05 = likely significant.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 12 },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "thresholdsStyle": { "mode": "line" }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red",   "value": -0.05 },
+              { "color": "green", "value": 0.05 }
+            ]
+          }
+        }
+      },
+      "targets": [{
+        "expr": "ab_test_score_delta",
+        "legendFormat": "{{prompt_id}} — {{test_id}}",
+        "datasource": { "type": "prometheus", "uid": "prometheus" }
+      }]
+    },
+
+    {
+      "id": 10,
+      "title": "Guardrail latency — p50 / p99",
+      "description": "Time added to requests by guardrail pipeline. p99 should stay below 200ms.",
+      "type": "timeseries",
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 20 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, rate(guardrail_latency_milliseconds_bucket[5m]))",
+          "legendFormat": "p50 — {{phase}}",
+          "datasource": { "type": "prometheus", "uid": "prometheus" }
+        },
+        {
+          "expr": "histogram_quantile(0.99, rate(guardrail_latency_milliseconds_bucket[5m]))",
+          "legendFormat": "p99 — {{phase}}",
+          "datasource": { "type": "prometheus", "uid": "prometheus" }
+        }
+      ]
+    },
+
+    {
+      "id": 11,
+      "title": "Prompt version history",
+      "description": "Audit trail of all prompt changes, promotions, and rollbacks.",
+      "type": "table",
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 20 },
+      "options": { "showHeader": true },
+      "targets": [{
+        "rawSql": "SELECT p.name, p.version, p.status, pa.action, pa.actor, pa.created_at FROM prompt_audit pa JOIN prompts p ON pa.prompt_id = p.prompt_id ORDER BY pa.created_at DESC LIMIT 30",
+        "format": "table",
+        "datasource": { "type": "postgres", "uid": "postgres" }
+      }]
+    }
+
+  ],
+
+  "annotations": {
+    "list": [{
+      "name": "Rollbacks",
+      "datasource": { "type": "postgres", "uid": "postgres" },
+      "rawQuery": true,
+      "rawSql": "SELECT triggered_at AS time, 'Rollback: ' || prompt_id AS text, 'critical' AS tags FROM drift_alerts WHERE auto_rollback=true ORDER BY triggered_at",
+      "enable": true,
+      "iconColor": "red"
+    }]
+  },
+
+  "alerting": {
+    "rules": [
+      {
+        "name": "Quality score critical drop",
+        "condition": "avg(llm_quality_score) < 0.65",
+        "for": "5m",
+        "severity": "critical",
+        "annotations": {
+          "summary": "LLM quality score has dropped below critical threshold",
+          "runbook": "Check drift_alerts table for affected prompt versions"
+        }
+      },
+      {
+        "name": "Guardrail block rate spike",
+        "condition": "rate(guardrail_blocks_total[5m]) > 0.1",
+        "for": "2m",
+        "severity": "warning",
+        "annotations": {
+          "summary": "Unusually high guardrail block rate — possible prompt injection attack"
+        }
+      },
+      {
+        "name": "Eval pass rate drop",
+        "condition": "avg(llm_eval_pass_rate) < 0.75",
+        "for": "10m",
+        "severity": "warning",
+        "annotations": {
+          "summary": "Eval pass rate below 75% — review recent prompt changes"
+        }
+      }
+    ]
+  }
+}

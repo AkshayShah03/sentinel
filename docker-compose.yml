@@ -1,0 +1,171 @@
+# ============================================================
+# AI Safety Platform — Local Development Stack
+# ============================================================
+# Start:       docker compose up --build
+# Grafana:     http://localhost:3002  (admin/admin)
+# Prometheus:  http://localhost:9095
+# Swagger UI:  http://localhost:8011/docs (guardrail-middleware)
+#
+# Ports shifted to avoid conflicts with other local Docker projects:
+#   Grafana:              3002  (was 3000)
+#   PostgreSQL:           5433  (was 5432)
+#   Redis:                6380  (was 6379)
+#   guardrail-middleware: 8011  (was 8001)
+#   eval-harness:         8012  (was 8002)
+#   prompt-registry:      8013  (was 8003)
+#   monitoring-pipeline:  8014  (was 8004)
+#   Prometheus:           9095  (was 9090)
+
+x-env: &common-env
+  DATABASE_URL: postgresql://postgres:postgres@postgres:5432/aibackend
+  REDIS_URL: redis://redis:6379
+  # OpenAI-compatible LLM endpoint — defaults to local Ollama (completely free)
+  # To use Groq instead: set LLM_API_KEY=gsk_... and LLM_BASE_URL=https://api.groq.com/openai/v1
+  LLM_API_KEY: "${LLM_API_KEY:-ollama}"
+  LLM_BASE_URL: "${LLM_BASE_URL:-http://host.docker.internal:11434/v1}"
+  JUDGE_MODEL: "${JUDGE_MODEL:-llama3.2:3b}"
+  EVAL_HARNESS_URL: http://eval-harness:8000
+  PROMPT_REGISTRY_URL: http://prompt-registry:8000
+  PYTHONUNBUFFERED: "1"
+  ENV: development
+
+services:
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: aibackend
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      retries: 10
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks: [safety-net]
+
+  redis:
+    image: redis:7.2-alpine
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 5
+    networks: [safety-net]
+
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/prometheus"]
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9095:9090"
+    networks: [safety-net]
+
+  grafana:
+    image: grafana/grafana:10.4.0
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_INSTALL_PLUGINS: "grafana-clock-panel"
+    volumes:
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3002:3000"
+    networks: [safety-net]
+    depends_on: [prometheus, postgres]
+
+  guardrail-middleware:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE_NAME: guardrail-middleware
+    environment:
+      <<: *common-env
+      PII_THRESHOLD: "0.0"
+      INJECTION_THRESHOLD: "0.7"
+      HALLUCINATION_THRESHOLD: "0.5"
+      PROMETHEUS_PORT: "9091"
+    ports:
+      - "8011:8000"
+      - "9091:9091"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [safety-net]
+
+  eval-harness:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE_NAME: eval-harness
+    environment:
+      <<: *common-env
+      EVAL_SAMPLE_RATE: "0.1"
+      EVAL_CONCURRENCY: "3"
+      PROMETHEUS_PORT: "9092"
+    ports:
+      - "8012:8000"
+      - "9092:9092"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [safety-net]
+
+  prompt-registry:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE_NAME: prompt-registry
+    environment:
+      <<: *common-env
+      PROMETHEUS_PORT: "9093"
+    ports:
+      - "8013:8000"
+      - "9093:9093"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [safety-net]
+
+  monitoring-pipeline:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE_NAME: monitoring-pipeline
+    environment:
+      <<: *common-env
+      SNAPSHOT_INTERVAL_SECONDS: "60"
+      DRIFT_WARNING_DROP_PCT: "0.05"
+      DRIFT_CRITICAL_DROP_PCT: "0.10"
+      AUTO_ROLLBACK_ENABLED: "false"
+      PROMETHEUS_PORT: "9094"
+    ports:
+      - "8014:8000"
+      - "9094:9094"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [safety-net]
+
+networks:
+  safety-net:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  prometheus-data:
+  grafana-data:

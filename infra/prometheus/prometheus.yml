@@ -1,0 +1,24 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: guardrail-middleware
+    static_configs:
+      - targets: ["guardrail-middleware:9091"]
+
+  - job_name: eval-harness
+    static_configs:
+      - targets: ["eval-harness:9092"]
+
+  - job_name: prompt-registry
+    static_configs:
+      - targets: ["prompt-registry:9093"]
+
+  - job_name: monitoring-pipeline
+    static_configs:
+      - targets: ["monitoring-pipeline:9094"]
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
