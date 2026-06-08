@@ -1,4 +1,4 @@
-# Sentinel — Production AI Safety & Quality Platform
+# Sentinel : Production AI Safety & Quality Platform
 
 > The missing infrastructure layer between your application and your LLM.
 
